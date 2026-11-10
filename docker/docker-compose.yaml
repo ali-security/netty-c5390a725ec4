@@ -16,6 +16,8 @@ services:
       - GPG_PASSPHRASE
       - GPG_PRIVATE_KEY
       - MAVEN_OPTS
+      - TEST_FILTER
+      - CI
     volumes:
       - ~/.ssh:/root/.ssh
       - ~/.gnupg:/root/.gnupg
@@ -30,10 +32,50 @@ services:
   build:
     <<: *common
     command: '/bin/bash -cl "
-      ./mvnw -B -ntp clean install -Dio.netty.testsuite.badHost=netty.io -Dtcnative.classifier=linux-x86_64-fedora && 
+      ./mvnw -B -ntp clean install -pl common,buffer,resolver,transport,codec,codec-http,transport-native-unix-common,transport-native-unix-common-tests,transport-classes-epoll,transport-native-epoll,transport-classes-kqueue,transport-native-kqueue,transport-sctp,transport-udt,transport-rxtx,handler -am -DskipTests=true -Dtcnative.classifier=linux-x86_64-fedora &&
+      ./mvnw -B -ntp install -pl common,buffer,resolver,transport,codec,codec-http,transport-native-unix-common,transport-native-unix-common-tests,transport-classes-epoll,transport-native-epoll,transport-classes-kqueue,transport-native-kqueue,transport-sctp,transport-udt,transport-rxtx -Dio.netty.testsuite.badHost=netty.io -Dtcnative.classifier=linux-x86_64-fedora $${TEST_FILTER:+-Dtest=$$TEST_FILTER -Dsurefire.failIfNoSpecifiedTests=false} &&
       cd testsuite-shading &&
       ../mvnw -B -ntp integration-test failsafe:verify -Dtcnative.classifier=linux-x86_64-fedora
     "'
+
+  build-handler:
+    <<: *common
+    command: '/bin/bash -cl "
+      ./mvnw -B -ntp clean install -pl handler -am -DskipTests=true -Dxml.skip=true &&
+      ./mvnw -B -ntp -Pboringssl install -pl handler -Dio.netty.testsuite.badHost=netty.io -Dxml.skip=true $${TEST_FILTER:+-Dtest=$$TEST_FILTER -Dsurefire.failIfNoSpecifiedTests=false}
+    "'
+
+  # Paranoid leak detection on the tests covering the patched SslClientHelloHandler/SniHandler,
+  # OpenSSL engine and ipfilter code; the full handler suite under -Pleak runs ~53 min, past the
+  # pipeline's wait (it passed with no LEAK: once, ali-security/netty-b64a0229518d run 42788644038).
+  build-handler-leak:
+    <<: *common
+    command: '/bin/bash -cl "
+      ./mvnw -B -ntp clean install -pl handler -am -DskipTests=true -Dxml.skip=true &&
+      ./mvnw -B -ntp -Pboringssl,leak install -pl handler -Dio.netty.testsuite.badHost=netty.io -Dxml.skip=true -Dtest=$${TEST_FILTER:-SniHandlerTest,ParameterizedSslHandlerTest,SslHandlerTest,JdkSslEngineTest,ReferenceCountedOpenSslEngineTest,OptionalSslHandlerTest,SslUtilsTest,IpSubnetFilterTest,SimpleTrustManagerFactoryTest} -Dsurefire.failIfNoSpecifiedTests=false
+    "'
+
+  build-codecs:
+    <<: *common
+    command: '/bin/bash -cl "
+      ./mvnw -B -ntp clean install -pl codec-dns,codec-haproxy,codec-http2,codec-memcache,codec-mqtt,codec-redis,codec-smtp,codec-socks,codec-stomp,codec-xml,resolver-dns,resolver-dns-classes-macos,resolver-dns-native-macos,handler-proxy,handler-ssl-ocsp -am -DskipTests=true -Dxml.skip=true &&
+      ./mvnw -B -ntp -Pboringssl install -pl codec-dns,codec-haproxy,codec-http2,codec-memcache,codec-mqtt,codec-redis,codec-smtp,codec-socks,codec-stomp,codec-xml,resolver-dns,resolver-dns-classes-macos,resolver-dns-native-macos,handler-proxy,handler-ssl-ocsp -Dio.netty.testsuite.badHost=netty.io -Dxml.skip=true $${TEST_FILTER:+-Dtest=$$TEST_FILTER -Dsurefire.failIfNoSpecifiedTests=false}
+    "'
+
+  build-testsuite:
+    <<: *common
+    command: '/bin/bash -cl "
+      ./mvnw -B -ntp clean install -pl testsuite -am -DskipTests=true -Dtcnative.classifier=linux-x86_64-fedora &&
+      ./mvnw -B -ntp test -pl testsuite -Dio.netty.testsuite.badHost=netty.io -Dtcnative.classifier=linux-x86_64-fedora $${TEST_FILTER:+-Dtest=$$TEST_FILTER -Dsurefire.failIfNoSpecifiedTests=false}
+    "'
+
+  build-testsuites-extra:
+    <<: *common
+    command: '/bin/bash -cl "
+      ./mvnw -B -ntp clean install -pl testsuite-native,testsuite-http2,testsuite-autobahn,testsuite-osgi,testsuite-native-image,testsuite-native-image-client,testsuite-native-image-client-runtime-init,transport-blockhound-tests -am -DskipTests=true -Dxml.skip=true &&
+      ./mvnw -B -ntp -Pboringssl install -pl testsuite-native,testsuite-http2,testsuite-autobahn,testsuite-osgi,testsuite-native-image,testsuite-native-image-client,testsuite-native-image-client-runtime-init,transport-blockhound-tests -Dio.netty.testsuite.badHost=netty.io -Dxml.skip=true $${TEST_FILTER:+-Dtest=$$TEST_FILTER -Dsurefire.failIfNoSpecifiedTests=false}
+    "'
+
 
   deploy:
     <<: *common
@@ -47,7 +89,7 @@ services:
       - ~/.m2:/root/.m2
       - ~/local-staging:/root/local-staging
       - ..:/code
-    command: /bin/bash -cl "./mvnw -B -ntp clean package org.sonatype.plugins:nexus-staging-maven-plugin:deploy -DaltStagingDirectory=/root/local-staging -DskipRemoteStaging=true -DskipTests=true"
+    command: /bin/bash -cl "./mvnw -B -ntp clean package deploy:deploy -DaltDeploymentRepository=local-staging::default::file:///root/local-staging -DskipTests=true"
 
   stage-release:
     <<: *common

@@ -362,6 +362,8 @@ public class BootstrapTest {
         // Should fail with the UnknownHostException.
         assertThat(connectFuture.await(10000), is(true));
         assertThat(connectFuture.cause(), is(instanceOf(UnknownHostException.class)));
+        // The channel is closed on the event loop after the connect promise fails, so wait for it.
+        assertThat(connectFuture.channel().closeFuture().await(10000), is(true));
         assertThat(connectFuture.channel().isOpen(), is(false));
     }
 
