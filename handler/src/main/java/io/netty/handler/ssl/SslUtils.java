@@ -273,6 +273,11 @@ final class SslUtils {
      *                  bytes to read.
      */
     static int getEncryptedPacketLength(ByteBuf buffer, int offset) {
+        assert offset >= buffer.readerIndex();
+        int remaining = buffer.writerIndex() - offset;
+        if (remaining < SSL_RECORD_HEADER_LENGTH) {
+            return NOT_ENOUGH_DATA;
+        }
         int packetLength = 0;
 
         // SSLv3 or TLS - Check ContentType
@@ -315,7 +320,8 @@ final class SslUtils {
                 packetLength = headerLength == 2 ?
                         (shortBE(buffer, offset) & 0x7FFF) + 2 : (shortBE(buffer, offset) & 0x3FFF) + 3;
                 if (packetLength <= headerLength) {
-                    return NOT_ENOUGH_DATA;
+                    // If there's no data then consider this package as not encrypted.
+                    return NOT_ENCRYPTED;
                 }
             } else {
                 return NOT_ENCRYPTED;
@@ -368,7 +374,7 @@ final class SslUtils {
         }
 
         // We need to copy 5 bytes into a temporary buffer so we can parse out the packet length easily.
-        ByteBuffer tmp = ByteBuffer.allocate(5);
+        ByteBuffer tmp = ByteBuffer.allocate(SSL_RECORD_HEADER_LENGTH);
 
         do {
             buffer = buffers[offset++].duplicate();
@@ -376,7 +382,7 @@ final class SslUtils {
                 buffer.limit(buffer.position() + tmp.remaining());
             }
             tmp.put(buffer);
-        } while (tmp.hasRemaining());
+        } while (tmp.hasRemaining() && offset < buffers.length);
 
         // Done, flip the buffer so we can read from it.
         tmp.flip();
@@ -384,6 +390,10 @@ final class SslUtils {
     }
 
     private static int getEncryptedPacketLength(ByteBuffer buffer) {
+        int remaining = buffer.remaining();
+        if (remaining < SSL_RECORD_HEADER_LENGTH) {
+            return NOT_ENOUGH_DATA;
+        }
         int packetLength = 0;
         int pos = buffer.position();
         // SSLv3 or TLS - Check ContentType
@@ -426,7 +436,8 @@ final class SslUtils {
                 packetLength = headerLength == 2 ?
                         (shortBE(buffer, pos) & 0x7FFF) + 2 : (shortBE(buffer, pos) & 0x3FFF) + 3;
                 if (packetLength <= headerLength) {
-                    return NOT_ENOUGH_DATA;
+                    // If there's no data then consider this package as not encrypted.
+                    return NOT_ENCRYPTED;
                 }
             } else {
                 return NOT_ENCRYPTED;
